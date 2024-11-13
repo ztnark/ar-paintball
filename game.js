@@ -27,6 +27,8 @@ let green;  // The visual green mesh
 
 let puttingLine;
 
+let groundPlane;
+
 function checkHoleCollision() {
     const ballPosition = new THREE.Vector2(ball.position.x, ball.position.z);
     const holePosition = new THREE.Vector2(hole.position.x, hole.position.z);
@@ -54,12 +56,16 @@ function init() {
     renderer.setSize(window.innerWidth, window.innerHeight);
     document.body.appendChild(renderer.domElement);
 
-    // Create ground
-    const groundGeometry = new THREE.PlaneGeometry(20, 20);
-    const groundMaterial = new THREE.MeshBasicMaterial({ color: 0x90EE90 }); // Light green
-    ground = new THREE.Mesh(groundGeometry, groundMaterial);
-    ground.rotation.x = -Math.PI / 2;
-    scene.add(ground);
+    // Create infinite ground plane
+    const groundGeometry = new THREE.PlaneGeometry(1000, 1000);  // Much bigger plane
+    const groundMaterial = new THREE.MeshBasicMaterial({ 
+        color: 0x90EE90,
+        side: THREE.DoubleSide
+    });
+    groundPlane = new THREE.Mesh(groundGeometry, groundMaterial);
+    groundPlane.rotation.x = -Math.PI / 2;
+    groundPlane.position.y = 0;
+    scene.add(groundPlane);
 
     // Create golf ball
     const ballGeometry = new THREE.SphereGeometry(0.2);
@@ -73,21 +79,21 @@ function init() {
     const holeMaterial = new THREE.MeshBasicMaterial({ color: 0x000000 });
     hole = new THREE.Mesh(holeGeometry, holeMaterial);
     hole.rotation.x = -Math.PI / 2;
-    hole.position.set(0, 0.01, -5);
+    hole.position.set(0, 0.01, -25);
     scene.add(hole);
 
     // Create flag pole
     const poleGeometry = new THREE.CylinderGeometry(0.02, 0.02, 1);
     const poleMaterial = new THREE.MeshBasicMaterial({ color: 0x8B4513 });
     flagPole = new THREE.Mesh(poleGeometry, poleMaterial);
-    flagPole.position.set(0, 0.5, -5);
+    flagPole.position.set(0, 0.5, -25);
     scene.add(flagPole);
 
     // Create flag
     const flagGeometry = new THREE.PlaneGeometry(0.5, 0.3);
     const flagMaterial = new THREE.MeshBasicMaterial({ color: 0xFF0000, side: THREE.DoubleSide });
     flag = new THREE.Mesh(flagGeometry, flagMaterial);
-    flag.position.set(0.25, 0.85, -5);
+    flag.position.set(0.25, 0.85, -25);
     scene.add(flag);
 
     createShootingLine();
@@ -294,6 +300,10 @@ function onMouseUp() {
 function animate() {
     requestAnimationFrame(animate);
 
+    // Update ground position to follow camera
+    groundPlane.position.x = camera.position.x;
+    groundPlane.position.z = camera.position.z;
+
     if (ball.velocity) {
         // Apply gravity
         ball.velocity.y -= 0.1;
@@ -364,6 +374,8 @@ function animate() {
             }
             
             setTimeout(() => {
+                isOnGreen = false;  // Reset putting mode
+                slingshot.visible = true;  // Show slingshot again
                 positionBallAndCamera();
             }, 1000);
         }
@@ -413,8 +425,14 @@ function createGreen() {
     });
     green = new THREE.Mesh(greenGeometry, greenMaterial);
     green.rotation.x = -Math.PI / 2;
-    green.position.copy(hole.position);
-    green.position.y = 0.02;  // Slightly above ground to prevent z-fighting
+    
+    // Set position but keep Y near ground level
+    green.position.set(
+        hole.position.x,
+        0.02,  // Just slightly above ground to prevent z-fighting
+        hole.position.z
+    );
+    
     scene.add(green);
 }
 

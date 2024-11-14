@@ -29,6 +29,9 @@ const VR_BALL_HEIGHT = 0.3;
 
 let slingshot; // Declare slingshot variable
 
+let trajectoryPoints = [];
+const NUM_TRAJECTORY_POINTS = 10;
+
 function init() {
     // Setup scene
     scene = new THREE.Scene();
@@ -135,6 +138,8 @@ function init() {
     renderer.xr.addEventListener('sessionend', () => {
         isVRMode = false;
     });
+
+    createTrajectoryPoints();
 }
 
 function createControllerMeshes() {
@@ -337,6 +342,32 @@ function animate() {
 
         // Update slingshot bands
         slingshot.updateBands(ball);
+
+        // Calculate predicted velocity
+        const ballWorldPos = new THREE.Vector3();
+        ball.getWorldPosition(ballWorldPos);
+        const forkCenter = getSlingshotForkCenter();
+        const shotDirection = forkCenter.clone().sub(ballWorldPos).normalize();
+        const distance = ballWorldPos.distanceTo(forkCenter);
+        
+        // Adjust power based on distance to hole
+        const distanceToHole = new THREE.Vector2(
+            hole.position.x - ballWorldPos.x,
+            hole.position.z - ballWorldPos.z
+        ).length();
+        
+        let power;
+        if (distanceToHole < GREEN_RADIUS) {
+            power = Math.min(distance * 5, maxPower * 0.3);
+        } else {
+            power = Math.min(distance * 15, maxPower);
+        }
+        
+        shotDirection.y = Math.min(distance * 0.5, 1.0);
+        shotDirection.normalize();
+        
+        const predictedVelocity = shotDirection.multiplyScalar(power);
+        updateTrajectoryPreview(ballWorldPos, predictedVelocity);
     }
 
     if (ball.velocity && ball.velocity.lengthSq() > 0) {
@@ -498,33 +529,40 @@ function setupVRControls() {
             slingshot.position.set(ball.position.x, 0, ball.position.z);
             slingshotHand = null;
         } else if (pinchHand === controller) {
-            // Get ball's current world position
             const ballWorldPos = new THREE.Vector3();
             ball.getWorldPosition(ballWorldPos);
             
-            // Get slingshot fork center
             const forkCenter = getSlingshotForkCenter();
-            
-            // Calculate direction FROM fork center TO ball (reversed from before)
             const shotDirection = forkCenter.clone().sub(ballWorldPos).normalize();
             
-            // Calculate power based on distance between ball and fork center
-            const distance = ballWorldPos.distanceTo(forkCenter);
-            const power = Math.min(distance * 15, maxPower);
+            // Calculate distance to hole
+            const distanceToHole = new THREE.Vector2(
+                hole.position.x - ballWorldPos.x,
+                hole.position.z - ballWorldPos.z
+            ).length();
             
-            // Add upward component based on pull distance
+            // Adjust power based on distance to hole
+            const distance = ballWorldPos.distanceTo(forkCenter);
+            let power;
+            
+            if (distanceToHole < GREEN_RADIUS) {
+                // On the green - reduce power significantly
+                power = Math.min(distance * 5, maxPower * 0.3);
+            } else {
+                // Regular shot - full power
+                power = Math.min(distance * 15, maxPower);
+            }
+            
             shotDirection.y = Math.min(distance * 0.5, 1.0);
             shotDirection.normalize();
             
-            // Apply velocity
             ball.velocity = shotDirection.multiplyScalar(power);
             
             isDragging = false;
             pinchHand = null;
             controller.userData.ballOffset = null;
-            
-            // Hide slingshot bands
             slingshot.hideBands();
+            hideTrajectoryPreview();
         }
     }
 
@@ -555,6 +593,52 @@ function getSlingshotForkCenter() {
     // Get world position of fork center
     slingshot.localToWorld(forkCenter.copy(leftForkPos.add(rightForkPos).multiplyScalar(0.5)));
     return forkCenter;
+}
+
+// Add this function to create trajectory preview points
+function createTrajectoryPoints() {
+    const sphereGeometry = new THREE.SphereGeometry(0.01); // Small spheres
+    const sphereMaterial = new THREE.MeshBasicMaterial({ 
+        color: 0xffffff,
+        transparent: true
+    });
+
+    for (let i = 0; i < NUM_TRAJECTORY_POINTS; i++) {
+        const sphere = new THREE.Mesh(sphereGeometry, sphereMaterial.clone());
+        sphere.visible = false;
+        scene.add(sphere);
+        trajectoryPoints.push(sphere);
+    }
+}
+
+// Add this function to update trajectory preview
+function updateTrajectoryPreview(startPos, velocity) {
+    const tempVelocity = velocity.clone();
+    const tempPos = startPos.clone();
+    const timeStep = 0.1;
+    
+    for (let i = 0; i < NUM_TRAJECTORY_POINTS; i++) {
+        // Update position
+        tempPos.x += tempVelocity.x * timeStep;
+        tempPos.y += tempVelocity.y * timeStep;
+        tempPos.z += tempVelocity.z * timeStep;
+        
+        // Apply gravity
+        tempVelocity.y -= 0.1 * timeStep;
+        
+        // Update sphere position and opacity
+        trajectoryPoints[i].position.copy(tempPos);
+        trajectoryPoints[i].material.opacity = 1 - (i / NUM_TRAJECTORY_POINTS);
+        trajectoryPoints[i].visible = true;
+        
+        // If trajectory hits ground, stop
+        if (tempPos.y < 0.2) break;
+    }
+}
+
+// Add this function to hide trajectory preview
+function hideTrajectoryPreview() {
+    trajectoryPoints.forEach(point => point.visible = false);
 }
 
 // Start the initialization

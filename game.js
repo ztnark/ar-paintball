@@ -498,23 +498,31 @@ function setupVRControls() {
             slingshot.position.set(ball.position.x, 0, ball.position.z);
             slingshotHand = null;
         } else if (pinchHand === controller) {
-            // Release ball and apply velocity
-            const controllerPos = new THREE.Vector3();
-            controller.getWorldPosition(controllerPos);
-            const finalBallPos = controllerPos.clone().add(
-                controller.userData.ballOffset || new THREE.Vector3()
-            );
-
-            const pullDirection = originalBallPosition
-                .clone()
-                .sub(finalBallPos);
-            const power = Math.min(pullDirection.length() * 3, maxPower);
-            ball.velocity = pullDirection.normalize().multiplyScalar(power);
-
+            // Get ball's current world position
+            const ballWorldPos = new THREE.Vector3();
+            ball.getWorldPosition(ballWorldPos);
+            
+            // Get slingshot fork center
+            const forkCenter = getSlingshotForkCenter();
+            
+            // Calculate direction FROM fork center TO ball (reversed from before)
+            const shotDirection = forkCenter.clone().sub(ballWorldPos).normalize();
+            
+            // Calculate power based on distance between ball and fork center
+            const distance = ballWorldPos.distanceTo(forkCenter);
+            const power = Math.min(distance * 15, maxPower);
+            
+            // Add upward component based on pull distance
+            shotDirection.y = Math.min(distance * 0.5, 1.0);
+            shotDirection.normalize();
+            
+            // Apply velocity
+            ball.velocity = shotDirection.multiplyScalar(power);
+            
             isDragging = false;
             pinchHand = null;
             controller.userData.ballOffset = null;
-
+            
             // Hide slingshot bands
             slingshot.hideBands();
         }
@@ -536,6 +544,17 @@ function checkHoleCollision() {
         return true;
     }
     return false;
+}
+
+// Add this helper function to calculate slingshot fork center
+function getSlingshotForkCenter() {
+    const leftForkPos = new THREE.Vector3(-0.14, 0.44, 0);
+    const rightForkPos = new THREE.Vector3(0.14, 0.44, 0);
+    const forkCenter = new THREE.Vector3();
+    
+    // Get world position of fork center
+    slingshot.localToWorld(forkCenter.copy(leftForkPos.add(rightForkPos).multiplyScalar(0.5)));
+    return forkCenter;
 }
 
 // Start the initialization

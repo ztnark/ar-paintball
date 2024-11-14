@@ -128,7 +128,7 @@ function init() {
     // Create flag with new color
     const flagGeometry = new THREE.PlaneGeometry(0.5, 0.3);
     const flagMaterial = new THREE.MeshBasicMaterial({ 
-        color: 0xFF7F50,  // Changed to coral
+        color: 0xDDA0DD,  // Changed to plum
         side: THREE.DoubleSide 
     });
     flag = new THREE.Mesh(flagGeometry, flagMaterial);
@@ -292,17 +292,23 @@ function onMouseMove(event) {
 }
 
 function updateSlingshotBands() {
-    // Update band positions with scaled positions
-    const slingshotWorldPosition = slingshot.getWorldPosition(new THREE.Vector3());
-
+    const slingshotWorldPos = new THREE.Vector3();
+    const ballWorldPos = new THREE.Vector3();
+    slingshot.getWorldPosition(slingshotWorldPos);
+    ball.getWorldPosition(ballWorldPos);
+    
+    // Calculate relative position
+    const relativePos = ballWorldPos.clone().sub(slingshotWorldPos);
+    
+    // Update band positions
     slingshotBand1.geometry.setFromPoints([
         new THREE.Vector3(-0.14, 0.44, 0),
-        ball.position.clone().sub(slingshotWorldPosition)
+        relativePos
     ]);
-
+    
     slingshotBand2.geometry.setFromPoints([
         new THREE.Vector3(0.14, 0.44, 0),
-        ball.position.clone().sub(slingshotWorldPosition)
+        relativePos
     ]);
 }
 
@@ -393,6 +399,11 @@ function animate() {
                 updateBallPosition();
             }, 1000);
         }
+    }
+
+    // Update ball position if not being dragged or in motion
+    if (!isDragging && !ball.velocity) {
+        updateBallPosition();
     }
 
     renderer.render(scene, camera);
@@ -536,8 +547,12 @@ function setupVRControls() {
                 pinchHand = vrController2;
                 isDragging = true;
                 originalBallPosition.copy(ball.position);
-                const ballOffset = ball.position.clone().sub(controllerPos);
-                vrController2.userData.ballOffset = ballOffset;
+                // Parent ball to controller
+                vrController2.add(ball);
+                // Position ball at controller tip
+                ball.position.set(0, 0, -0.1);
+                // Update slingshot bands
+                updateSlingshotBands();
             }
         }
     });
@@ -546,7 +561,6 @@ function setupVRControls() {
         if (slingshotHand === vrController2) {
             slingshotHand.remove(slingshot);
             scene.add(slingshot);
-            // Position slingshot under the ball
             slingshot.position.set(
                 ball.position.x,
                 0,
@@ -554,18 +568,22 @@ function setupVRControls() {
             );
             slingshotHand = null;
         } else if (pinchHand === vrController2) {
-            // Release ball and apply velocity
-            const controllerPos = new THREE.Vector3();
-            vrController2.getWorldPosition(controllerPos);
-            const finalBallPos = controllerPos.clone().add(vrController2.userData.ballOffset);
-
-            const pullDirection = originalBallPosition.clone().sub(finalBallPos);
+            // Get world position before removing from controller
+            const worldPos = new THREE.Vector3();
+            ball.getWorldPosition(worldPos);
+            
+            // Remove ball from controller and add back to scene
+            vrController2.remove(ball);
+            scene.add(ball);
+            ball.position.copy(worldPos);
+            
+            // Calculate velocity
+            const pullDirection = originalBallPosition.clone().sub(ball.position);
             const power = Math.min(pullDirection.length() * 3, maxPower);
             ball.velocity = pullDirection.normalize().multiplyScalar(power);
-
+            
             isDragging = false;
             pinchHand = null;
-            vrController2.userData.ballOffset = null;
         }
     });
 }
@@ -588,22 +606,31 @@ function createControllerMeshes() {
     vrController2.add(controllerMesh2);
 }
 
-// Update ball position when not being dragged
+// Modify updateBallPosition for correct positioning
 function updateBallPosition() {
     if (!isDragging && !ball.velocity) {
-        // Get slingshot's world position and orientation
-        const slingshotPos = new THREE.Vector3();
-        const slingshotQuat = new THREE.Quaternion();
-        slingshot.getWorldPosition(slingshotPos);
-        slingshot.getWorldQuaternion(slingshotQuat);
+        if (slingshotHand) {
+            // If slingshot is being held, position ball in the fork relative to slingshot
+            const slingshotWorldPos = new THREE.Vector3();
+            const slingshotWorldQuat = new THREE.Quaternion();
+            slingshot.getWorldPosition(slingshotWorldPos);
+            slingshot.getWorldQuaternion(slingshotWorldQuat);
 
-        // Calculate position at the fork of the slingshot
-        const forkOffset = new THREE.Vector3(0, 0.3, 0);  // Position at fork height
-        forkOffset.applyQuaternion(slingshotQuat);  // Adjust for slingshot rotation
+            // Position for the fork (slightly above and behind the slingshot center)
+            const forkOffset = new THREE.Vector3(0, 0.3, 0.1);  // Changed to positive Z for behind
+            forkOffset.applyQuaternion(slingshotWorldQuat);
 
-        // Set ball position
-        ball.position.copy(slingshotPos).add(forkOffset);
-        originalBallPosition.copy(ball.position);
+            ball.position.copy(slingshotWorldPos).add(forkOffset);
+            originalBallPosition.copy(ball.position);
+        } else {
+            // If slingshot is not being held, keep ball above and behind slingshot
+            ball.position.set(
+                slingshot.position.x,
+                slingshot.position.y + 0.3,
+                slingshot.position.z + 0.1  // Moved behind slingshot
+            );
+            originalBallPosition.copy(ball.position);
+        }
     }
 }
 

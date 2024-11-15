@@ -355,19 +355,36 @@ function animate() {
         ball.velocity.y -= 0.1;
 
         // Update position
+        const previousPosition = ball.position.clone();
         ball.position.add(ball.velocity.clone().multiplyScalar(0.1));
 
         // Check for target collision
-        const targetDistance = ball.position.distanceTo(target.position);
-        if (Math.abs(ball.position.z - target.position.z) < 0.1 && 
-            targetDistance < TARGET_SIZE) {
-            // Create paint splat at collision point
-            createPaintSplat(ball.position.clone(), ball.material.color);
+        const targetZ = target.position.z;
+        // Check if ball passed through target plane between last frame and this frame
+        if ((previousPosition.z > targetZ && ball.position.z <= targetZ) || 
+            (previousPosition.z <= targetZ && ball.position.z > targetZ)) {
             
-            // Reset ball
-            ball.velocity.set(0, 0, 0);
-            ball.position.set(0, BALL_SLINGSHOT_HEIGHT, 0);
-            ball.material.color.setHex(getRandomColor());
+            // Calculate intersection point with target plane
+            const t = (targetZ - previousPosition.z) / (ball.position.z - previousPosition.z);
+            const intersectX = previousPosition.x + t * (ball.position.x - previousPosition.x);
+            const intersectY = previousPosition.y + t * (ball.position.y - previousPosition.y);
+            
+            // Check if intersection is within target bounds
+            const distanceFromCenter = Math.sqrt(
+                Math.pow(intersectX - target.position.x, 2) + 
+                Math.pow(intersectY - target.position.y, 2)
+            );
+            
+            if (distanceFromCenter < TARGET_SIZE) {
+                // Create paint splat at intersection point
+                const intersectionPoint = new THREE.Vector3(intersectX, intersectY, targetZ);
+                createPaintSplat(intersectionPoint, ball.material.color);
+                
+                // Reset ball
+                ball.velocity.set(0, 0, 0);
+                ball.position.set(0, BALL_SLINGSHOT_HEIGHT, 0);
+                ball.material.color.setHex(getRandomColor());
+            }
         }
 
         // Reset ball if it goes too far

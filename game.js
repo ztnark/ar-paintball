@@ -32,10 +32,17 @@ let slingshot; // Declare slingshot variable
 let trajectoryPoints = [];
 const NUM_TRAJECTORY_POINTS = 10;
 
+const TARGET_DISTANCE = 15; // Distance to target
+const TARGET_SIZE = 3; // Size of the target
+const TARGET_RINGS = 5; // Number of concentric rings
+const PAINTBALL_SIZE = 0.05; // Size of paintballs
+let target, targetRings = [];
+let paintSplats = []; // Array to store paint splats
+
 function init() {
     // Setup scene
     scene = new THREE.Scene();
-    scene.background = new THREE.Color(0x87CEEB); // Sky blue
+    scene.background = new THREE.Color(0x111111); // Dark background
 
     // Setup renderer with XR
     renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -70,56 +77,31 @@ function init() {
     // Add event listeners to controllers
     setupVRControls();
 
-    // Create ground plane
-    const groundGeometry = new THREE.PlaneGeometry(1000, 1000);
-    const groundMaterial = new THREE.MeshBasicMaterial({
-        color: 0x90EE90,
-        side: THREE.DoubleSide,
-    });
-    groundPlane = new THREE.Mesh(groundGeometry, groundMaterial);
-    groundPlane.rotation.x = -Math.PI / 2;
+    // Replace ground plane with a smaller platform
+    const platformGeometry = new THREE.BoxGeometry(4, 0.1, 4);
+    const platformMaterial = new THREE.MeshBasicMaterial({ color: 0x333333 });
+    groundPlane = new THREE.Mesh(platformGeometry, platformMaterial);
+    groundPlane.position.y = -0.5;
     scene.add(groundPlane);
 
-    // Create golf ball
-    const ballGeometry = new THREE.SphereGeometry(0.02);
-    const ballMaterial = new THREE.MeshBasicMaterial({ color: 0xffffff });
+    // Create target
+    createTarget();
+
+    // Create paintball instead of golf ball
+    const ballGeometry = new THREE.SphereGeometry(PAINTBALL_SIZE);
+    const ballMaterial = new THREE.MeshBasicMaterial({ 
+        color: getRandomColor() // We'll define this helper function
+    });
     ball = new THREE.Mesh(ballGeometry, ballMaterial);
     ball.position.set(0, BALL_SLINGSHOT_HEIGHT, 0);
-    ball.velocity = new THREE.Vector3(); // Initialize ball.velocity
+    ball.velocity = new THREE.Vector3();
     scene.add(ball);
 
-    // Create hole
-    const holeGeometry = new THREE.CircleGeometry(0.3);
-    const holeMaterial = new THREE.MeshBasicMaterial({ color: 0x000000 });
-    hole = new THREE.Mesh(holeGeometry, holeMaterial);
-    hole.rotation.x = -Math.PI / 2;
-    hole.position.set(0, 0.01, -25);
-    scene.add(hole);
-
-    // Create flag pole
-    const poleGeometry = new THREE.CylinderGeometry(0.02, 0.02, 1);
-    const poleMaterial = new THREE.MeshBasicMaterial({ color: 0x8B4513 });
-    flagPole = new THREE.Mesh(poleGeometry, poleMaterial);
-    flagPole.position.set(0, 0.5, -25);
-    scene.add(flagPole);
-
-    // Create flag
-    const flagGeometry = new THREE.PlaneGeometry(0.5, 0.3);
-    const flagMaterial = new THREE.MeshBasicMaterial({
-        color: 0xDDA0DD,
-        side: THREE.DoubleSide,
-    });
-    flag = new THREE.Mesh(flagGeometry, flagMaterial);
-    flag.position.set(0.25, 0.85, -25);
-    scene.add(flag);
-
     createShootingLine();
-    createGreen();
-    createPuttingLine();
-
-    // Create an instance of Slingshot
+    
+    // Create slingshot
     slingshot = new Slingshot();
-    slingshot.position.set(0, 0, -0.5); // Position it in front of the player
+    slingshot.position.set(0, 0, -0.5);
     scene.add(slingshot);
 
     // Initial positioning
@@ -322,52 +304,50 @@ function animate() {
     groundPlane.position.z = player.position.z;
 
     if (isDragging && isVRMode && pinchHand) {
-        // Get controller's world position
-        const controllerPos = new THREE.Vector3();
-        pinchHand.getWorldPosition(controllerPos);
+        try {
+            // Get controller's world position
+            const controllerPos = new THREE.Vector3();
+            pinchHand.getWorldPosition(controllerPos);
 
-        // Apply offset if any
-        if (pinchHand.userData.ballOffset) {
-            controllerPos.add(pinchHand.userData.ballOffset);
+            // Apply offset if any
+            if (pinchHand.userData.ballOffset) {
+                controllerPos.add(pinchHand.userData.ballOffset);
+            }
+
+            // Limit pull distance
+            const pullVector = controllerPos.clone().sub(originalBallPosition);
+            const pullDistance = Math.min(pullVector.length(), SLINGSHOT_CONSTRAINT);
+            pullVector.setLength(pullDistance);
+
+            // Update ball position
+            ball.position.copy(originalBallPosition.clone().add(pullVector));
+
+            // Update slingshot bands
+            if (slingshot) {
+                slingshot.updateBands(ball);
+            }
+
+            // Calculate predicted velocity
+            const ballWorldPos = new THREE.Vector3();
+            ball.getWorldPosition(ballWorldPos);
+            const forkCenter = getSlingshotForkCenter();
+            
+            if (forkCenter) {
+                const shotDirection = forkCenter.clone().sub(ballWorldPos).normalize();
+                const distance = ballWorldPos.distanceTo(forkCenter);
+                const power = Math.min(distance * 15, maxPower);
+                
+                shotDirection.y = Math.min(distance * 0.5, 1.0);
+                shotDirection.normalize();
+                
+                const predictedVelocity = shotDirection.multiplyScalar(power);
+                updateTrajectoryPreview(ballWorldPos, predictedVelocity);
+            }
+        } catch (error) {
+            console.error('Error in ball dragging:', error);
+            isDragging = false;
+            pinchHand = null;
         }
-
-        // Limit pull distance
-        const pullVector = controllerPos.clone().sub(originalBallPosition);
-        const pullDistance = Math.min(pullVector.length(), SLINGSHOT_CONSTRAINT);
-
-        pullVector.setLength(pullDistance);
-
-        // Update ball position
-        ball.position.copy(originalBallPosition.clone().add(pullVector));
-
-        // Update slingshot bands
-        slingshot.updateBands(ball);
-
-        // Calculate predicted velocity
-        const ballWorldPos = new THREE.Vector3();
-        ball.getWorldPosition(ballWorldPos);
-        const forkCenter = getSlingshotForkCenter();
-        const shotDirection = forkCenter.clone().sub(ballWorldPos).normalize();
-        const distance = ballWorldPos.distanceTo(forkCenter);
-        
-        // Adjust power based on distance to hole
-        const distanceToHole = new THREE.Vector2(
-            hole.position.x - ballWorldPos.x,
-            hole.position.z - ballWorldPos.z
-        ).length();
-        
-        let power;
-        if (distanceToHole < GREEN_RADIUS) {
-            power = Math.min(distance * 5, maxPower * 0.3);
-        } else {
-            power = Math.min(distance * 15, maxPower);
-        }
-        
-        shotDirection.y = Math.min(distance * 0.5, 1.0);
-        shotDirection.normalize();
-        
-        const predictedVelocity = shotDirection.multiplyScalar(power);
-        updateTrajectoryPreview(ballWorldPos, predictedVelocity);
     }
 
     if (ball.velocity && ball.velocity.lengthSq() > 0) {
@@ -377,46 +357,25 @@ function animate() {
         // Update position
         ball.position.add(ball.velocity.clone().multiplyScalar(0.1));
 
-        // Ground collision
-        if (ball.position.y < 0.2) {
-            ball.position.y = 0.2;
-            ball.velocity.y = -ball.velocity.y * 0.5;
-
-            ball.velocity.x *= 0.8;
-            ball.velocity.z *= 0.8;
-        }
-
-        // Apply friction
-        ball.velocity.x *= 0.99;
-        ball.velocity.z *= 0.99;
-
-        // Stop the ball if it's moving very slowly
-        if (ball.velocity.length() < 0.1 && ball.position.y <= 0.2) {
+        // Check for target collision
+        const targetDistance = ball.position.distanceTo(target.position);
+        if (Math.abs(ball.position.z - target.position.z) < 0.1 && 
+            targetDistance < TARGET_SIZE) {
+            // Create paint splat at collision point
+            createPaintSplat(ball.position.clone(), ball.material.color);
+            
+            // Reset ball
             ball.velocity.set(0, 0, 0);
-            handleBallStop();
+            ball.position.set(0, BALL_SLINGSHOT_HEIGHT, 0);
+            ball.material.color.setHex(getRandomColor());
         }
 
-        // Check if ball went in hole
-        if (checkHoleCollision()) {
-            if (ball.position.y > -0.2) {
-                ball.position.y -= 0.02;
-                ball.velocity.set(0, 0, 0);
-            }
-
-            setTimeout(() => {
-                isOnGreen = false; // Reset putting mode
-                slingshot.visible = true; // Show slingshot again
-
-                // Reset ball and slingshot to starting position
-                ball.position.set(0, BALL_SLINGSHOT_HEIGHT, 0);
-                slingshot.position.set(0, 0, -0.5);
-
-                // Reset player position
-                player.position.set(0, 0, 0);
-
-                // Update positions
-                updateBallPosition();
-            }, 1000);
+        // Reset ball if it goes too far
+        if (ball.position.z < -TARGET_DISTANCE - 10 || 
+            ball.position.y < -10) {
+            ball.velocity.set(0, 0, 0);
+            ball.position.set(0, BALL_SLINGSHOT_HEIGHT, 0);
+            ball.material.color.setHex(getRandomColor());
         }
     }
 
@@ -458,23 +417,15 @@ function updateBallPosition() {
     if (!isDragging && (!ball.velocity || ball.velocity.lengthSq() === 0)) {
         if (slingshotHand) {
             // If slingshot is being held, position ball in the fork relative to slingshot
-            const slingshotWorldPos = new THREE.Vector3();
-            const slingshotWorldQuat = new THREE.Quaternion();
-            slingshot.getWorldPosition(slingshotWorldPos);
-            slingshot.getWorldQuaternion(slingshotWorldQuat);
-
-            // Position for the fork
-            const forkOffset = new THREE.Vector3(0, 0.3, 0.1); // Slightly behind
-            forkOffset.applyQuaternion(slingshotWorldQuat);
-
-            ball.position.copy(slingshotWorldPos).add(forkOffset);
+            const forkCenter = getSlingshotForkCenter();
+            ball.position.copy(forkCenter);
             originalBallPosition.copy(ball.position);
         } else {
-            // If slingshot is not being held, keep ball above and behind slingshot
+            // If slingshot is not being held, keep ball above slingshot
             ball.position.set(
                 slingshot.position.x,
-                slingshot.position.y + 0.3,
-                slingshot.position.z + 0.1
+                slingshot.position.y + BALL_SLINGSHOT_HEIGHT,
+                slingshot.position.z
             );
             originalBallPosition.copy(ball.position);
         }
@@ -502,7 +453,7 @@ function setupVRControls() {
                 slingshot.position.set(0, -0.1, -0.2);
                 updateBallPosition();
             }
-        } else if (slingshotHand !== controller) {
+        } else if (slingshotHand !== controller && !isDragging) {
             const distance = controllerPos.distanceTo(ball.position);
             if (distance < 0.5) {
                 pinchHand = controller;
@@ -528,30 +479,16 @@ function setupVRControls() {
             scene.add(slingshot);
             slingshot.position.set(ball.position.x, 0, ball.position.z);
             slingshotHand = null;
-        } else if (pinchHand === controller) {
+            updateBallPosition();
+        } else if (pinchHand === controller && isDragging) {
             const ballWorldPos = new THREE.Vector3();
             ball.getWorldPosition(ballWorldPos);
             
             const forkCenter = getSlingshotForkCenter();
             const shotDirection = forkCenter.clone().sub(ballWorldPos).normalize();
             
-            // Calculate distance to hole
-            const distanceToHole = new THREE.Vector2(
-                hole.position.x - ballWorldPos.x,
-                hole.position.z - ballWorldPos.z
-            ).length();
-            
-            // Adjust power based on distance to hole
             const distance = ballWorldPos.distanceTo(forkCenter);
-            let power;
-            
-            if (distanceToHole < GREEN_RADIUS) {
-                // On the green - reduce power significantly
-                power = Math.min(distance * 5, maxPower * 0.3);
-            } else {
-                // Regular shot - full power
-                power = Math.min(distance * 15, maxPower);
-            }
+            const power = Math.min(distance * 15, maxPower);
             
             shotDirection.y = Math.min(distance * 0.5, 1.0);
             shotDirection.normalize();
@@ -641,5 +578,79 @@ function hideTrajectoryPreview() {
     trajectoryPoints.forEach(point => point.visible = false);
 }
 
+// Add new function to create target
+function createTarget() {
+    const targetGroup = new THREE.Group();
+    
+    // Create a backing plane for the target (black border)
+    const backingGeometry = new THREE.CircleGeometry(TARGET_SIZE + 0.1, 32);
+    const backingMaterial = new THREE.MeshBasicMaterial({
+        color: 0x000000,
+        side: THREE.DoubleSide
+    });
+    const backing = new THREE.Mesh(backingGeometry, backingMaterial);
+    targetGroup.add(backing);
+
+    // Create concentric rings from outside to inside
+    // black and white
+    const colors = [0x000000, 0xffffff, 0x000000, 0xffffff, 0x000000];
+    
+    for (let i = 0; i < TARGET_RINGS; i++) {
+        const ringSize = ((TARGET_RINGS - i) / TARGET_RINGS) * TARGET_SIZE;
+        const ringGeometry = new THREE.CircleGeometry(ringSize, 32);
+        const ringMaterial = new THREE.MeshBasicMaterial({
+            color: colors[i],
+            side: THREE.DoubleSide
+        });
+        const ring = new THREE.Mesh(ringGeometry, ringMaterial);
+        
+        // Move each ring slightly forward to prevent z-fighting
+        ring.position.z = 0.001 * (i + 1);
+        
+        targetRings.push(ring);
+        targetGroup.add(ring);
+    }
+
+    // Position the target
+    targetGroup.position.set(0, 2, -TARGET_DISTANCE);
+    scene.add(targetGroup);
+    target = targetGroup;
+}
+
+// Add function to create paint splats
+function createPaintSplat(position, color) {
+    const splatGeometry = new THREE.CircleGeometry(0.1, 8);
+    const splatMaterial = new THREE.MeshBasicMaterial({
+        color: color,
+        side: THREE.DoubleSide,
+        transparent: true,
+        opacity: 0.8
+    });
+    const splat = new THREE.Mesh(splatGeometry, splatMaterial);
+    
+    // Position slightly in front of target to avoid z-fighting
+    splat.position.copy(position);
+    splat.position.z += 0.01;
+    
+    // Random rotation for variety
+    splat.rotation.z = Math.random() * Math.PI * 2;
+    
+    scene.add(splat);
+    paintSplats.push(splat);
+    
+    // Limit number of splats for performance
+    if (paintSplats.length > 50) {
+        const oldestSplat = paintSplats.shift();
+        scene.remove(oldestSplat);
+    }
+}
+
+// Add helper function for random colors
+function getRandomColor() {
+    const colors = [0xff0000, 0x00ff00, 0x0000ff, 0xff00ff, 0xffff00, 0x00ffff];
+    return colors[Math.floor(Math.random() * colors.length)];
+}
+
 // Start the initialization
 init();
+
